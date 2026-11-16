@@ -7,6 +7,7 @@ Status tags used below:
 - **[V-src]** — read directly in open source code that parses real files (source cited).
 - **[V-2src]** — two independent implementations agree.
 - **[U]** — unverified: inferred, single weak source, or known to be uncertain. Must be confirmed on real files before code relies on it; parsers must preserve the bytes rather than assume.
+- **[R]** — relayed: reported to the planning session by another session's research, not read here; treat as unverified until the named task re-reads the source.
 - **[TODO-Mx-Tyy]** — the task that resolves an open item.
 
 When a task confirms or corrects an item, it updates this file (change the tag to **[V-corpus]** and add the survey figure).
@@ -21,8 +22,8 @@ When a task confirms or corrects an item, it updates this file (change the tag t
 | S4 | SneakyLib — https://github.com/SneakySims/SneakyLib | none (all rights reserved) | read only, never copy | README read |
 | S5 | SimObliterator Suite — https://github.com/DnfJeff/SimObliterator_Suite | unclear (README says MIT, GitHub shows none) | read only | README read |
 | S6 | trolando/Sims1Tools (IFF Pencil 2, FARx…) — https://github.com/trolando/Sims1Tools | Apache-2.0, binaries only | workflow reference | README read |
-| S7 | mixiate ts1-compiler (Rust) — https://github.com/mixiate/ts1-compiler | MPL-2.0 | may port | README read, **source not yet read** [TODO-M1-T09] |
-| S8 | mixiate ts1-blender-io — https://github.com/mixiate/ts1-blender-io ; ts1-renderer — https://github.com/mixiate/ts1-renderer | MPL-2.0 | may port | README/wiki read, source not yet read [TODO-M5-T01] |
+| S7 | mixiate ts1-compiler (Rust) — https://github.com/mixiate/ts1-compiler | MPL-2.0 | may port | README read; rendering-related source (`src/splitter.rs`, `src/quantizer.rs`) summarized by another session (§15), **not read here** [TODO-M1-T09, TODO-M7-T01] |
+| S8 | mixiate ts1-blender-io — https://github.com/mixiate/ts1-blender-io ; ts1-renderer — https://github.com/mixiate/ts1-renderer | MPL-2.0 | may port | README/wiki read; ts1-renderer `addons/render_ts1/__init__.py` summarized by another session (§15), **not read here** [TODO-M5-T01, TODO-M7-T01] |
 | S9 | Cyndersanity, Sims Legacy mod guide — https://cyndersanity.github.io/sims-legacy-mod-guide | — | workflow, paths | read |
 | S10 | riperiperi, Legacy Collection technical overview — https://gist.github.com/riperiperi/78c843b7fc3b11a92e3d5585a7815fee | — | Legacy differences | read (summarized) |
 | S11 | Don Hopkins / Maxis design documents — https://linkedbyair.net/bin/The%20Sims%20Design%20Documents/ (e.g. `117492995-The-Sims-Object-IFF-File-Format.pdf`, `…Transmogrifer-Renovation-Plan.pdf`) | — | reference | **404 at planning time**; retry in M1-T08 |
@@ -400,6 +401,67 @@ From S9 and S12; nothing from TMog's code or documents (S11 unreachable).
 XML elements seen in tutorials: `<drawgroups>` / `<drawgroupitem spritenum flags shadowflags>`, `<sprites>` / `<sprite framecount>` / `<spriteframe index filename zoom proxy>`. Full schema **[U] [TODO-M3-T06]**.
 GUID composition (cookie in the middle 16 bits, random elsewhere) is from a tutorial: **[U] [TODO-M2-T06]**.
 
+## 15. Rendering conventions for authored objects (Blender pipeline)
+
+Used by milestone M7. **Everything in this section was relayed to the planning session as a summary of the upstream sources; nobody in the planning session read those files.** Each item is therefore tagged **[R]** (relayed, to be verified) and M7-T01 must re-read the sources, replace the tags with **[V-src]** + file/line, and restructure this section into the subsections its acceptance criteria name. [TODO-M7-T01]
+
+Sources: `mixiate/ts1-renderer` `addons/render_ts1/__init__.py` (S8); `mixiate/ts1-compiler` `src/splitter.rs`, `src/quantizer.rs` (S7); both MPL-2.0, so the logic may be ported with attribution.
+
+### Camera [R]
+
+- Orthographic camera, `rotation_euler` = (60°, 0°, 45°): 30° elevation above the ground plane, 45° yaw.
+- Camera location (17, −17, 17·√(2/3) + 2), parented to a rotation origin.
+- Clip range 5 … 48.08.
+- The camera never moves. The four views are produced by rotating the **object's** rotation origin in 90° steps: "NW" 0°, "NE" −90°, "SE" −180°, "SW" −270°.
+
+### Scale and resolution [R]
+
+- 1 Blender unit (BU) = one tile edge. Objects may be up to 4 BU tall. A table is about 0.84 BU tall.
+- Orthographic scale for a 1×1 object = (2 − 128/136) × 4 = 4.2353; add 0.7071 per extra tile, where extra = (x − 1) + (y − 1).
+- Render resolution 136 × 384 px for 1×1; add 64 px per extra tile on **both** axes.
+- Zooms: large (our `near`) 128 × 64 px per tile; medium (`med`) 64 × 32; small (`far`) 32 × 16. Sprite canvases 136 × 384 / 68 × 192 / 34 × 96.
+
+### Rotations — mapping **[U] [TODO-M7-T01]**
+
+Which of NW/NE/SE/SW corresponds to our `rf`/`lf`/`lb`/`rb` (FreeSO DGRP direction bits, §7) is not established. Fixed by M7-T01 and proven by the asymmetric-marker test in M7-T03.
+
+### Render passes [R]
+
+- Cycles only; denoising off; adaptive sampling off; transparent film; Z pass enabled.
+- Depth pass rendered separately: 1 sample, pixel filter width 1, 0 light bounces, "Camera Data → View Z Depth", i.e. raw camera-space distances in BU.
+- Output file formats and bit depths written by the add-on: **[U] [TODO-M7-T01]**. objectizer's own render-set formats are defined in PLAN.md §6a.
+
+### Depth mapping [R]
+
+- The compiler maps depth into a window 3.2 BU deep around each tile, using `DISTANCE_TO_CENTER_FROM_CAMERA` = 27.7609, to 8 bits; nearer = lower value; pixels off the object = 255 (matches SPR2 decoded transparency, §4.3).
+- Exact formula, rounding, and the per-tile centre used for multi-tile objects: **[U] [TODO-M7-T01]**.
+- Whether Maxis sprites use the same window (so that authored and Maxis objects sort consistently) is **[U]**: checked statistically by the depth-plane metrics in M7-T07 and in game by M7-T12.
+
+### Downsampling and alpha [R]
+
+- Colour and alpha are rendered at 200% and downsampled with Lanczos3 in linear light.
+- Alpha threshold ≈ 8/255; in-game coverage is effectively binary.
+
+### Palette and dithering [R]
+
+- One 256-entry palette per sprite; index 0 is transparent with key colour (255, 255, 0); the remaining 255 colours come from imagequant with Floyd–Steinberg dithering on posterized colours.
+- A code comment says R5G6B5 but the posterize bit depths used are 3/2/3: **[U] [TODO-M7-T01]** — determine which is in effect and why.
+- Note the difference from Volcanic (§4.5), which puts the transparent index at 255. Which index Maxis files use is measured by M1-T08; objectizer follows the base object's convention unless M7-T01 finds a reason not to.
+- imagequant is GPL-3.0-or-commercial: objectizer does not link it (M7-T05 uses its own quantizer).
+
+### Sprite cropping and offsets **[U] [TODO-M7-T01]**
+
+How the splitter cuts a multi-tile render into per-tile sprites, crops them, and derives frame and draw-group offsets is to be read from `splitter.rs` and written here.
+
+### Lighting, world, materials — not specified by any source
+
+- The add-on does not define lighting. The FreeSO object template is reported to use a Sky Texture world with a ground plane (for ambient occlusion and glossy reflections) and Turbidity 10 for indoor objects **[R]**; the template file itself was not obtained.
+- The original Maxis light rig is undocumented. objectizer derives its look empirically (M7-T07 … M7-T09) and freezes it as `presets/maxis-look-v1.json`.
+
+### Historical notes (context only) [R]
+
+Maxis modelled objects in 3D Studio Max and rendered them through a custom sprite exporter (attributed to Eric Bowman) to z-buffered sprites; base-game objects often drew only two of four rotations and mirrored the others (§7 flip flag); a contractor, New Pencil, produced most expansion-pack sprites (Livin' Large, Hot Date) from themed asset libraries. Consequence for calibration: the look may differ between base game and expansions, so the reference set (M7-T07) spans both and metrics are reported per source.
+
 ## 14. Open-item index
 
 | Item | Section | Resolved by |
@@ -423,3 +485,7 @@ GUID composition (cookie in the middle 16 bits, random elsewhere) is from a tuto
 | Wall frames | 11 | M4-T03 |
 | Skin binary formats | 12 | M5-T01 |
 | Niotso license | 0 | M1-T01 |
+| All rendering conventions (camera, scale, depth window, downsample, palette, rotation mapping, cropping) | 15 | M7-T01 |
+| Whether Maxis sprites share the 3.2 BU depth window | 15 | M7-T07, M7-T12 |
+| Maxis lighting / look (no source) | 15 | M7-T09 (empirical) |
+| Transparent index convention in Maxis files (0 vs 255) | 4.5, 15 | M1-T08 |

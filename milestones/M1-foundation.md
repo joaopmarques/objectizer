@@ -125,7 +125,7 @@ Conventions for every task below: "tests pass" means `cargo fmt --all --check &&
 - **Inputs:** docs/formats.md §1.1, §2, §4.4, §6, §14; docs/testing.md §5. Also retry fetching the design documents (formats.md source S11) and, if reachable, note relevant facts with citation.
 - **Outputs:**
   - `cargo xtask survey` → `target/survey/survey.json` + printed summary.
-  - Statistics at minimum: chunk-type histogram and versions (OBJD, DGRP, SPR2, SPR#, STR# formats, PALT); IFF header variants; rsmp presence, version, type/entry ordering, self-listing; FAR layout facts; SPR2: flags histogram, per-flag pixel-opcode histogram, opcode used for opaque z = 0 pixels, trailing opcode-3 runs (count of rows ending with one vs rows ending early), leading-run shapes, max run lengths, pad-byte value histogram, skip-row usage at frame start/end, empty-row encodings, bytes after end marker, offset ordering/gaps, per-frame palette id values, zero-size frames; all split by source (base game / each expansion / Downloads).
+  - Statistics at minimum: chunk-type histogram and versions (OBJD, DGRP, SPR2, SPR#, STR# formats, PALT); IFF header variants; rsmp presence, version, type/entry ordering, self-listing; FAR layout facts; SPR2: flags histogram, per-flag pixel-opcode histogram, opcode used for opaque z = 0 pixels, trailing opcode-3 runs (count of rows ending with one vs rows ending early), leading-run shapes, max run lengths, pad-byte value histogram, skip-row usage at frame start/end, empty-row encodings, bytes after end marker, offset ordering/gaps, per-frame palette id values, transparent-index values and the colour stored at that index, zero-size frames; all split by source (base game / each expansion / Downloads).
   - `docs/survey-findings.md` (numbers and conclusions only) and updated tags in docs/formats.md (**[U]** → **[V-corpus]** or corrected text) for §1.1, §2, §4.1, §4.4, §6.
   - A written "Maxis SPR2 encoder rules" section in `docs/survey-findings.md`: one explicit rule per question 1–8 of formats.md §4.4, or "varies: …" with the variants.
 - **Acceptance:**
@@ -141,7 +141,7 @@ Conventions for every task below: "tests pass" means `cargo fmt --all --check &&
 
 - **Goal:** Encode `Pixels` + header into frame bytes that follow the Maxis rules found in M1-T08.
 - **Inputs:** `docs/survey-findings.md` encoder rules; docs/formats.md §4. Read `mixiate/ts1-compiler` (MPL-2.0) and FreeSO `SPR2FrameEncoder.cs` (MPL-2.0) first; port where they agree with the findings, with attribution.
-- **Outputs:** `Spr2Frame::encode(pixels, header, &EncodeOptions) -> Vec<u8>`; `Spr2::replace_frame(index, pixels, header)`; `Spr2::push_frame`; `Spr2::to_bytes()` now lays out re-encoded frames and rebuilds the offset table. If the survey found more than one Maxis variant, `EncodeOptions` selects one and the default is the most common.
+- **Outputs:** formats.md §0 row S7 updated (encoder source read; `TODO-M1-T09` tag removed). `Spr2Frame::encode(pixels, header, &EncodeOptions) -> Vec<u8>`; `Spr2::replace_frame(index, pixels, header)`; `Spr2::push_frame`; `Spr2::to_bytes()` now lays out re-encoded frames and rebuilds the offset table. If the survey found more than one Maxis variant, `EncodeOptions` selects one and the default is the most common.
 - **Acceptance:**
   - Tests pass.
   - Proptest `spr2::encode_decode_random`: random grids for flags 1, 3, 7, sizes 0–300, → `decode(encode(p)) == p`.

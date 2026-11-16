@@ -78,7 +78,7 @@ T01–T04 are independent of each other (four parallel lanes). After T05: T06→
 - **Inputs:** docs/formats.md §3.1–3.3; PLAN.md §4 (`<source>` grammar), §10 R10.
 - **Outputs:**
   - `object::ObjectFile` (an `IffFile` + decoded views): `objects() -> Vec<ObjectDef>`; for each: OBJD, name/description (CTSS), thumbnail chunk, DGRP list, the set of sprite chunks and frames reachable from them, PALTs used; `shared_palettes()`; unreferenced sprite/PALT chunks.
-  - `install::Index`: all OBJDs across FARs, loose IFFs and Downloads → `{guid, name, source, objd_id, master_id, sub_index, price, category, visible}`; cached in the platform cache dir keyed by path + size + mtime; `--no-cache` flag.
+  - `install::Index`: all OBJDs across FARs, loose IFFs and Downloads → `{guid, name, source, objd_id, master_id, sub_index, price, category, visible}`; cached in the platform cache dir keyed by path + size + mtime; `--no-cache` flag. (M6-T08 later replaces this cache with the persistent, searchable index; keep the record type and the lookup API small and stable so that swap is internal.)
   - `ops::list` object mode with filters `--name`, `--guid`, `--category`, `--multi-tile`; `ops::inspect` object mode; `<source>` resolution for `guid:` and `name:`.
 - **Acceptance:**
   - Tests pass; on `testkit::object` fixtures the graph lists exactly the expected chunk ids; a dangling DGRP→sprite reference produces `W_DANGLING_REF`, not an error.

@@ -7,12 +7,12 @@ Related documents:
 - [AGENTS.md](AGENTS.md) — conventions for implementing agents
 - [docs/formats.md](docs/formats.md) — file-format reference with sources and verification status
 - [docs/testing.md](docs/testing.md) — testing strategy and gates
-- Milestones: [M1](milestones/M1-foundation.md), [M2](milestones/M2-single-tile-objects.md), [M3](milestones/M3-multi-tile-parity.md), [M4](milestones/M4-floors-walls.md), [M5](milestones/M5-skins.md), [M6](milestones/M6-gui.md)
+- Milestones: [M1](milestones/M1-foundation.md), [M2](milestones/M2-single-tile-objects.md), [M3](milestones/M3-multi-tile-parity.md), [M4](milestones/M4-floors-walls.md), [M5](milestones/M5-skins.md), [M6](milestones/M6-gui.md), [M7](milestones/M7-blender-pipeline.md)
 
 ## 1. Goals
 
 1. Replace the Transmogrifier (TMog) workflow for The Sims 1 with one open-source tool that runs natively on macOS, Linux and Windows: clone an object with new GUIDs, export its sprites, edit them, re-import, and get a working `.iff`.
-2. Go beyond TMog: catalog thumbnail editing, palette-only recolor, validation, multi-tile objects, floors, walls, skins, and later a GUI.
+2. Go beyond TMog: catalog thumbnail editing, palette-only recolor, validation, multi-tile objects, floors, walls, skins, a searchable index of every object in the game, authoring of new objects from Blender renders with a calibrated Maxis look, and later a GUI.
 3. Be drivable by coding agents: a library, a CLI with stable JSON output and exit codes, and an MCP server that is a thin layer over the library.
 4. Work from the user's own game files, for both The Sims Legacy Collection (2025) and The Sims Complete Collection.
 5. Never corrupt what it doesn't edit: content the user did not change is written back byte-identical.
@@ -24,7 +24,8 @@ Related documents:
 - No behaviour (BHAV) editing, no TTAB/SLOT editing, no save-game editing. These chunks are carried through untouched.
 - No patching of `Sims.exe`, no DRM interaction.
 - No The Sims Online / FAR3 / TSO chunk versions (SPR2 v1001, STR# format −4, OBJD v142). The parsers may reject them with `E_UNSUPPORTED`.
-- No 3D rendering of new objects (mixiate's ts1-renderer covers Blender → sprites). objectizer consumes rendered images.
+- No renderer of its own and no modelling: new objects are modelled by the user or an agent in Blender, and objectizer drives the user's Blender install headless (§6a). Blender is needed only for `render` and `calibrate run`; every other command works without it.
+- No GPL-licensed dependencies (e.g. imagequant).
 - No copying from Transmogrifier, IFF Pencil 2, SneakyLib or SimObliterator (see §9).
 
 ## 3. Architecture
@@ -41,6 +42,8 @@ Rust, one Cargo workspace, edition 2021, MSRV pinned in `rust-toolchain.toml` (s
 | `objectizer-testkit` | lib (dev) | Synthetic fixture builders, corpus walker, round-trip comparison helpers. |
 | `xtask` | bin (dev) | `cargo xtask corpus`, `cargo xtask survey`, `cargo xtask guard-assets`. |
 | `objectizer-gui` | bin (M6) | Desktop GUI over `objectizer-core`. |
+
+Non-crate directories: `blender/` (Python scripts executed inside Blender, M7), `presets/` (JSON presets, M7), `examples/` (M7).
 
 Rule: every user-visible operation is a function in `objectizer-core::ops` that takes a request struct and returns `Result<Response, Error>`, where request and response derive `serde::{Serialize, Deserialize}` and `schemars::JsonSchema`. The CLI and MCP server only translate arguments to requests and render responses. This is what keeps the three front ends consistent.
 
@@ -64,9 +67,15 @@ Rule: every user-visible operation is a function in `objectizer-core::ops` that 
 | `guid` | Allocation, collision index, ledger | M2-T06 |
 | `image` | PNG channel IO, quantization, downscaling | M2-T08, M2-T10, M3-T05 |
 | `bundle` | Bundle manifest, export, import | M2-T08, M2-T09 |
-| `ops` | `locate`, `list`, `inspect`, `extract`, `clone`, `export`, `import`, `recolor`, `set_catalog`, `validate`, `roundtrip`, `guid` | per task |
+| `ops` | `locate`, `list`, `inspect`, `extract`, `clone`, `export`, `import`, `recolor`, `set_catalog`, `validate`, `roundtrip`, `guid`, `index_build`, `index_status`, `preview`, `render`, `compile`, `calibrate_refs`, `calibrate_measure`, `calibrate_run`, `review` | per task |
 | `floor`, `wall` | `.flr` / `.wll` models | M4 |
 | `skin` | CMX/BCF/SKN/BMF, naming, textures | M5 |
+| `index` | Persistent object index, query engine | M6-T08 |
+| `preview` | Object compositing at any zoom/rotation, thumbnail cache | M6-T09 |
+| `render::scene` | Camera, resolution and rotation math; scene spec | M7-T02 |
+| `render::blender` | Blender discovery and headless process runner | M7-T03 |
+| `render::compile` | Render set → planes: downsample, alpha, depth mapping, tile split, cropping | M7-T04 |
+| `calibrate` | Reference set, look metrics, scoring, review | M7-T07, M7-T09, M7-T10 |
 
 ### 3.3 Data model: lossless by default
 
@@ -123,7 +132,7 @@ Commands:
 | Command | Milestone | Purpose |
 |---|---|---|
 | `objectizer locate` | M1 | Find game installs; report kind (`legacy` / `complete`), root, Downloads path, object sources |
-| `objectizer list [<path>]` | M1 (chunks/files), M2 (objects) | List FAR entries, IFF chunks, or objects. With no path: all objects in the install + Downloads. Filters: `--type`, `--name`, `--guid`, `--category`, `--multi-tile`, `--kind object\|floor\|wall` (M4); `--no-cache` |
+| `objectizer list [<path>]` | M1 (chunks/files), M2 (objects) | List FAR entries, IFF chunks, or objects. With no path: all objects in the install + Downloads. Filters: `--type`, `--name`, `--guid`, `--category`, `--multi-tile`, `--kind object\|floor\|wall` (M4); `--no-cache`. From M6-T08 (index-backed): `--query <text>`, `--source`, `--origin maxis\|custom`, `--single-tile`, `--price-min`, `--price-max`, `--visible`/`--hidden`, `--lang`, `--sort`, `--limit`, `--offset` |
 | `objectizer inspect <source>` | M1 (chunk level), M2 (object level) | Full structured dump of one file, chunk or object: OBJD fields, graph of DGRP/SPR2/PALT/CTSS/BMP_, frame table |
 | `objectizer extract <far> [--entry <name>] --out <dir>` | M1 | Extract files from a FAR1 archive |
 | `objectizer clone <source> --name <name> [--out <path>] [--cookie <u16>] [--guid <hex>] [--all-langs] [--recolor-hue <deg>]` | M2, M3 | Copy an object's IFF (from a loose file or FAR entry) with fresh GUIDs. Default output: `<Downloads>/objectizer/<name>.iff`. `--recolor-hue` (M3) clones and recolours in one step |
@@ -137,12 +146,28 @@ Commands:
 | `objectizer floor list\|inspect\|export\|create` | M4 | Floors (`.flr`) |
 | `objectizer wall list\|inspect\|export\|create` | M4 | Walls (`.wll`) |
 | `objectizer skin list\|inspect\|export\|retexture\|clone\|validate` | M5 | Skins and clothing |
+| `objectizer index build\|status\|clear` | M6-T08 | Build, inspect or clear the local object index (§4a). `list` builds it on first use |
+| `objectizer preview <source> [--zoom] [--rot] [--state n] [--scale 1\|2\|4] [--sheet] --out <png>` | M6-T09 | Composite an object at any zoom/rotation into a PNG |
+| `objectizer render <model.blend> --out <render-dir> [--tiles XxY] [--preset <name\|path>] [--blender <path>] [--zooms] [--views] [--samples N] [--collection <name>] [--with-scale-figure] [--inject-materials] [--list-materials] [--write-template <file.blend>]` | M7 | Render a model headless in Blender into a render set (§6a) |
+| `objectizer compile <render-dir> --base <source> --out <bundle-dir> [--name] [--state n] [--palette per-object\|per-sprite] [--alpha binary\|soft] [--no-dither] [--thumbnail auto\|none]` | M7 | Turn a render set into a sprite bundle for a cloned base object |
+| `objectizer calibrate refs\|measure\|run\|compare` | M7 | Reference export, look metrics, calibration run and comparison (§6a) |
+| `objectizer review <bundle-or-iff> --refs <cache-dir> --out <review-dir> [--class <material>]` / `review --check <review.json>` | M7 | Metric and vision review of an authored object against Maxis references |
 
 Batch use (M3-T07): `clone`, `export`, `recolor`, `validate` accept several sources or `--from-list <json>`; results come back in `data.items[]`; `--keep-going` continues after a failed item.
 
-Dev commands (not part of the user CLI): `cargo xtask corpus`, `cargo xtask survey`, `cargo xtask guard-assets`, `cargo xtask parity-check` (M3-T08).
+Dev commands (not part of the user CLI): `cargo xtask corpus`, `cargo xtask survey`, `cargo xtask guard-assets`, `cargo xtask parity-check` (M3-T08), `cargo xtask bench-index` (M6-T08), `cargo xtask blender-tests` and `cargo xtask doc-commands` (M7).
 
 `<source>` grammar (used by `inspect`, `clone`, `export`): a path to an `.iff`; or `<far-path>::<entry-name>`; or `guid:<hex>`; or `name:<catalog or file name>` resolved through the install index. Ambiguous `name:` matches fail with `E_CONFLICT` and list candidates in `details`.
+
+### 4a. Object index and query model
+
+The index (M6-T08) is a local cache of one record per logical object across every FAR, loose IFF and Downloads file. It lives in the platform cache dir, is rebuilt incrementally, and is never committed or shared.
+
+Record fields: `guid`, `tile_guids[]`, `name` and `description` per language present, `internal_name` (OBJD label), `source { path, far_entry }`, `source_group` (`base`, `expansion:<n>`, `shared`, `downloads`, `other`), `origin` (`maxis` or `custom`, decided by location), `price`, `kind` (`object`, later `floor`, `wall`), `category` and sub-sorts, `visible`, `tile_count`, `footprint`, `has_thumbnail`, `content_hash`.
+
+`objectizer list` (object mode), the MCP `list` tool and the GUI catalog view (M6-T10) all run the same query: free-text `--query` (case- and accent-insensitive, over names, description, file name and GUID hex) combined with the filters in the command table, plus `--sort`, `--limit`, `--offset`. The response always carries `total`. Whatever the GUI can find, an agent can find with the same arguments.
+
+Previews (M6-T09): `objectizer preview` composites an object at any zoom and rotation into a PNG; a size-capped thumbnail cache sits beside the index.
 
 ## 5. MCP tool surface
 
@@ -163,8 +188,14 @@ Binary `objectizer-mcp`, stdio transport, built with the official Rust MCP SDK (
 | `roundtrip` | `roundtrip` | no |
 | `guid_new`, `guid_check` | `guid new`, `guid check` | ledger only |
 | `floor_*`, `wall_*`, `skin_*` | M4/M5 groups | varies |
+| `index_build`, `index_status` | `index build`, `index status` | cache only |
+| `preview` | `preview` | yes (one PNG) |
+| `render` | `render` | yes; runs Blender |
+| `compile` | `compile` | yes |
+| `calibrate_refs`, `calibrate_measure`, `calibrate_run` | `calibrate refs`, `calibrate measure`, `calibrate run` | yes (cache / report dirs); `calibrate_run` runs Blender |
+| `review` | `review` | yes (review dir) |
 
-Every mutating tool accepts `dry_run: bool`. Tools never write outside paths given in the request or the install's `Downloads/objectizer/` directory. Read-only tools are annotated `readOnlyHint`.
+Every mutating tool accepts `dry_run: bool`. Tools never write outside paths given in the request, the install's `Downloads/objectizer/` directory, or objectizer's own platform cache dir (index, thumbnails, reference exports). Tools that start Blender (`render`, `calibrate_run`) are long-running: they report progress and honour cancellation. Read-only tools are annotated `readOnlyHint`.
 
 ## 6. Sprite bundle format
 
@@ -238,6 +269,38 @@ Import rules:
 5. Missing `z` for a frame that needs one: keep the old z if dimensions are unchanged, otherwise fail with `E_VALIDATION` (z cannot be invented). `--auto-zoom` (M3-T05) derives `med`/`far` frames for all channels from `near`.
 6. `draw_groups` and `catalog` edits in the manifest are applied in M3 (`draw_groups`) and M2 (`catalog`).
 
+## 6a. Authoring new objects: the Blender pipeline
+
+Milestone [M7](milestones/M7-blender-pipeline.md). Conventions and their sources are in docs/formats.md §15.
+
+```
+model.blend ──render──▶ render set ──compile──▶ sprite bundle ──import──▶ cloned base .iff ──validate / review──▶ game
+              (Blender,              (Rust: split, depth,       (§6)
+               headless)              downsample, quantize)
+```
+
+- **`render`** runs the user's Blender headless (`blender -b model.blend -P blender/objectizer_render.py -- scene-spec.json out/`). The scene (orthographic camera at 30° elevation and 45° yaw, rotation origin, resolution, passes, lights, world) is created by the script from a scene spec computed in the Rust core, and a versioned look preset (`presets/maxis-look-v<N>.json`). The model file contains geometry and materials only.
+- **`compile`** is pure Rust and deterministic: linear-light downsample from the supersampled render, alpha threshold, depth mapped into the per-tile 8-bit z window, multi-tile split, cropping and offsets, palette quantization with dithering. Output is a normal sprite bundle (§6).
+- **New object recipe:** `clone <base>` (a Maxis object with the wanted behaviour and footprint) → `render` → `compile --base <clone>` → `import <bundle> --into <clone>` → `set-catalog` → `validate` → `review`.
+- **`calibrate`** measures how close rendered stand-in models are to a reference set of Maxis sprites exported from the user's install into the local cache, so an agent can tune the look preset until the metrics converge; the result is frozen as `maxis-look-v1`.
+- **`review`** compares an authored object with its nearest Maxis reference (metrics + contact sheets for a vision model) and gates on both.
+
+Design decisions (justified in the M7 file): objectizer **ports** the camera math and compile logic from mixiate's ts1-renderer and ts1-compiler (MPL-2.0) instead of depending on the add-on at runtime; the scene is generated from a JSON spec, not a committed `.blend`; no GPL dependency (ts1-compiler's imagequant is replaced by the project's own quantizer); Blender is an external tool found via `--blender`, `OBJECTIZER_BLENDER`, or `PATH`, with one pinned LTS version in `blender/BLENDER_VERSION`.
+
+Render set layout (`render` output, `compile` input):
+
+```
+<render-dir>/
+  objectizer.render.json                 manifest: schema, tiles, preset name + hash, Blender version, scene spec, file list
+  renders/
+    <view>_<zoom>_color.exr              RGBA, linear, at the supersample factor (default 2×)
+    <view>_<zoom>_depth.exr              single channel, camera-space Z in Blender units, at 1×
+```
+
+`<view>` is `rf|lf|lb|rb` and `<zoom>` is `near|med|far`, the same names as bundles: 4 × 3 × 2 = 24 image files. The mapping between Blender object rotations (0°, −90°, −180°, −270°) and view names is fixed by M7-T01. File formats may be revised by M7-T01 after reading the upstream sources; the names stay.
+
+Repository directories added by M7: `blender/` (Python driver, stand-in and material builders — MPL-2.0, run only inside Blender), `presets/` (JSON only: look presets, material and stand-in definitions, the reference-set GUID list, aggregate reference metrics), `examples/` (script-built example models). No `.blend`, `.exr` or rendered image is committed.
+
 ## 7. Game versions and paths
 
 Both games use the same IFF/FAR formats (no evidence of new chunk types or versions in Legacy; verified on the user's files by M1-T08). Differences that matter:
@@ -299,7 +362,12 @@ What this implies for implementing agents (repeated in AGENTS.md):
 | R7 | TMog XML/BMP layout and magic-cookie bit placement are known only from tutorials | Treated as interop extras behind explicit tasks (M3-T06, M2-T06) that require a user-supplied sample before implementation. |
 | R8 | Skin formats (BCF/BMF/CFP) are documented only as source code | M5 starts with a documentation spike (M5-T01) that writes the layouts into docs/formats.md before any parser task starts. |
 | R9 | Agents drift on names and interfaces across parallel tasks | This file fixes command names, error codes and module names; AGENTS.md makes changing them a plan change, not a code change. |
-| R10 | Large Downloads folders / many FARs make `list` slow | Install index cached under the platform cache dir, keyed by path + size + mtime (M2-T05). |
+| R10 | Large Downloads folders / many FARs make `list` slow | Install index cached under the platform cache dir, keyed by path + size + mtime (M2-T05), replaced by the persistent, incrementally rebuilt index with a benchmarked query engine (M6-T08). |
+| R11 | The original Maxis light rig and materials are undocumented; authored objects look out of place | Calibration against the user's own Maxis sprites with measurable look metrics and a frozen, hash-checked preset (M7-T07, M7-T09); metric + vision review per object (M7-T10); human side-by-side check in game (M7-T12). |
+| R12 | Rendering facts were relayed from upstream sources, not read in this planning session (camera constants, depth window, posterize bits) | M7-T01 verifies each against the ts1-renderer / ts1-compiler source before code depends on it; the tile-diamond and depth tests (M7-T02, M7-T03) would fail on a wrong constant. |
+| R13 | Wrong depth mapping → authored objects sort wrongly against Sims and neighbours | Exact analytic depth tests (M7-T04); review checks the depth plane (M7-T10); explicit seated-Sim and behind-counter checks in game (M7-T12). |
+| R14 | Blender version drift or Cycles non-determinism breaks renders or tests | One pinned Blender LTS, version warning, tolerance-based render tests, deterministic post-render stages; Blender tests are a local tier, never a CI requirement (docs/testing.md §11). |
+| R15 | Reference sprites or contact sheets containing Maxis pixels leak into the repo | They are written only to the platform cache or a user-given directory outside the repository (path check in `calibrate` and `review`), and `guard-assets` rejects images and `.exr`/`.blend` files. Only aggregate statistics and GUID lists are committed. |
 
 ## 11. Milestones
 
@@ -310,7 +378,8 @@ What this implies for implementing agents (repeated in AGENTS.md):
 | [M3 — Multi-tile and TMog parity](milestones/M3-multi-tile-parity.md) | Multi-tile clone/export/import, SPR#, auto-zoom, mirrored rotations, TMog folder import, parity matrix | M2 |
 | [M4 — Floors and walls](milestones/M4-floors-walls.md) | Create/export `.flr` and `.wll` | M1, M2-T02 (STR#), M2-T08 and M2-T10 (PNG IO, quantization), M3-T04 (SPR#, walls only), M3-T05 (downscale) |
 | [M5 — Skins and clothing](milestones/M5-skins.md) | CMX/BCF/SKN/BMF parsing, skin retexture and clone | M1, M2-T10 (quantization, for M5-T05) |
-| [M6 — GUI](milestones/M6-gui.md) | Cross-platform desktop app over the library | M2 (minimum), M3–M5 for full coverage |
+| [M6 — GUI](milestones/M6-gui.md) | Persistent object index, search and previews in core/CLI/MCP (M6-T08, M6-T09), then a cross-platform desktop app whose main screen is a searchable catalog of every object in the game | M2 (minimum; M6-T09 needs M3-T03), M3–M5 for full coverage |
+| [M7 — Blender rendering pipeline](milestones/M7-blender-pipeline.md) | `render`, `compile`, `calibrate`, `review`: author new objects in Blender with a calibrated Maxis look and get a playable `.iff` | M2, M3-T01, M3-T03 |
 
 Ordering notes (changes from the original brief and why):
 
@@ -318,5 +387,7 @@ Ordering notes (changes from the original brief and why):
 - **SPR# lives in M3** (M3-T04) because walls need it and the M1 survey will tell whether any objects still use it.
 - **M4 and M5 do not depend on M3's multi-tile work** (M4 needs only M3-T04 and M3-T05 from it), so they can be staffed in parallel with M3 once their listed dependencies are done.
 - The **corpus survey precedes the encoder** inside M1, because the only inspectable encoder (FreeSO's) is not known to match Maxis output.
+- **M7 (Blender pipeline) is numbered last but runs right after M2, alongside M3.** It was added after the first version of this plan; numbering it M7 keeps every existing task ID stable. It needs only M2 plus M3-T01 and M3-T03.
+- **The object index and previews (M6-T08, M6-T09) are core/CLI/MCP work inside the GUI milestone** and should be scheduled right after M2 / M3-T03, so agents get search long before the GUI exists.
 
 Task ID format: `M<milestone>-T<two digits>`, e.g. `M2-T07`. Human-only checks are tasks too and are marked **[human gate]**.
